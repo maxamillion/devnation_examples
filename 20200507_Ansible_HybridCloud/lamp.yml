@@ -1,0 +1,56 @@
+---
+- name: deploy lamp stack
+  hosts: containerlamp:LAMP
+
+  tasks:
+    - name: install some packages
+      yum:
+        name:
+          - python3
+          - httpd
+          - mariadb-server
+          - python3-firewall
+          - firewalld
+
+    - name: start and enable services
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - httpd
+        - mariadb
+
+    - name: only manage firewalld for non-container hosts
+      when: ansible_virtualization_type != "oci"
+      block:
+        - name: start and enable firewalld only for non-container hosts
+          service:
+            name: firewalld
+            state: started
+            enabled: yes
+
+        - name: open the firewalld ports
+          firewalld:
+            service: "{{ item }}"
+            permanent: yes
+            immediate: yes
+            state: enabled
+          loop:
+            - http
+            - https
+
+    - name: deploy some code!
+      copy:
+        src: superapp.html
+        dest: /var/www/html/index.html
+      notify: reload httpd
+
+  handlers:
+    - name: reload httpd
+      service:
+        name: httpd
+        state: reloaded
+
+
+

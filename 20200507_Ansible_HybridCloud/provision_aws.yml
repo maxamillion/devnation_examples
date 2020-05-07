@@ -1,0 +1,106 @@
+---
+- name: Provision EC2 Instance
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    ec2_info:
+      rhel8:
+        owners: 309956199498
+        instance_type: t2.large
+        os_type: linux
+        disk_space: 100
+        architecture: x86_64
+        filter: 'RHEL-8????_HVM-????????-x86_64-?-Access2-GP2'
+        username: 'ec2-user'
+      keypair: 'admiller'
+      region: 'us-east-1'
+      security_group: 'admiller-devnation-secgroup'
+      vpc: 'admillertest-vpc'
+      vpc_subnet: 'admillertest-subnet'
+      instance_name: 'admillerDevNationRHEL8LAMP'
+
+  tasks:
+    - name: find latest RHEL8 ami
+      ec2_ami_info:
+        region: "{{ ec2_info.region }}"
+        owners: "{{ ec2_info.rhel8.owners }}"
+        filters:
+          name: "{{ ec2_info.rhel8.filter }}"
+          architecture: "{{ ec2_info.rhel8.architecture }}"
+      register: rhel8_amis
+
+    - name: resolve the subnet id
+      ec2_vpc_subnet_info:
+        filters:
+          "tag:Name": "{{ ec2_info.vpc_subnet }}"
+      register: vpc_subnet_info
+
+    - name: get vpc info
+      ec2_vpc_net_info:
+        filters:
+          "tag:Name": "{{ ec2_info.vpc }}"
+      register: vpc_info
+
+    - name: save ami for node
+      set_fact:
+        rhel8_ami: >
+          {{ rhel8_amis.images | selectattr('name', 'defined') | sort(attribute='creation_date') | last }}
+
+    - name: Create a security group
+      ec2_group:
+        name: "{{ ec2_info.security_group }}"
+        description: "Security Group for {{ ec2_info.security_group }}"
+        region: "{{ ec2_info.region }}"
+        vpc_id: "{{ vpc_info.vpcs.0.id }}"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 443
+            to_port: 443
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+      register: create_sg
+
+    - name: Create EC2 instances for LAMP Stack
+      ec2_instance:
+        name: "{{ ec2_info.instance_name }}" 
+        vpc_subnet_id: "{{ vpc_subnet_info.subnets.0.id }}"
+        key_name: "{{ ec2_info.keypair }}"
+        security_group: "{{ ec2_info.security_group }}"
+        instance_type: "{{ ec2_info.rhel8.instance_type }}"
+        image_id: "{{ rhel8_ami.image_id }}"
+        region: "{{ ec2_info.region }}"
+        network:
+          assign_public_ip: true
+        volumes:
+          - device_name: /dev/sda1
+            ebs:
+              volume_type: gp2
+              volume_size: "{{ ec2_info.rhel8.disk_space }}"
+              delete_on_termination: true
+        tags:
+      register: node_output
+
+    - name: Add the instance to our inventory
+      lineinfile:
+        dest: "./inventory.ini"
+        regexp: "{{ node_output.instances.0.public_ip_address }}"
+        insertafter: "[LAMP]"
+        line: "{{ node_output.instances.0.public_ip_address }} ansible_user=ec2-user ansible_become=yes"
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ node_output.instances.0.public_ip_address }}"
+        port: 22
+        state: present
+

@@ -1,0 +1,114 @@
+- name: Create Azure VM
+  hosts: localhost
+  connection: local
+  vars:
+    azure_info:
+      rg: admiller-devnation-rg
+      vnet: admiller-devnation-vnet
+      subnet: admiller-devnation-subnet
+      pub_ip: admiller-devnation-pub_ip
+      security_group: admiller-devnation-secgrp
+      nic: admiller-devnation-nic
+      vm: admiller-devnation-vm
+      location: eastus
+      user: azureuser
+      image_offer: RHEL
+      image_publisher: RedHat
+      image_sku: 8
+      image_version: latest
+
+  tasks:
+    - name: Create resource group
+      azure_rm_resourcegroup:
+        name: "{{ azure_info.rg }}"
+        location: "{{ azure_info.location }}"
+
+    - name: Create virtual network
+      azure_rm_virtualnetwork:
+        resource_group: "{{ azure_info.rg }}"
+        name: "{{ azure_info.vnet }}"
+        address_prefixes: "10.0.0.0/16"
+
+    - name: Add subnet
+      azure_rm_subnet:
+        resource_group: "{{ azure_info.rg }}"
+        name: "{{ azure_info.subnet }}"
+        address_prefix: "10.0.1.0/24"
+        virtual_network: "{{ azure_info.vnet }}"
+
+    - name: Create public IP address
+      azure_rm_publicipaddress:
+        resource_group: "{{ azure_info.rg }}"
+        allocation_method: Static
+        name: "{{ azure_info.pub_ip }}"
+      register: output_ip_address
+
+    - name: Dump public IP for VM which will be created
+      debug:
+        msg: "The public IP is {{ output_ip_address.state.ip_address }}."
+
+    - name: Create Network Security Group that allows SSH
+      azure_rm_securitygroup:
+        resource_group: "{{ azure_info.rg }}"
+        name: "{{ azure_info.security_group }}"
+        rules:
+          - name: SSH
+            protocol: Tcp
+            destination_port_range: 22
+            access: Allow
+            priority: 1001
+            direction: Inbound
+          - name: HTTPS
+            protocol: Tcp
+            destination_port_range: 443
+            access: Allow
+            priority: 1002
+            direction: Inbound
+          - name: HTTP
+            protocol: Tcp
+            destination_port_range: 80
+            access: Allow
+            priority: 1003
+            direction: Inbound
+
+    - name: Create virtual network interface card
+      azure_rm_networkinterface:
+        resource_group: "{{ azure_info.rg }}"
+        name: "{{ azure_info.nic }}"
+        virtual_network: "{{ azure_info.vnet }}"
+        subnet: "{{ azure_info.subnet }}"
+        security_group: "{{ azure_info.security_group }}"
+        ip_configurations:
+          - name: ipconfig1
+            public_ip_address_name: "{{ azure_info.pub_ip }}"
+            primary: True
+
+    - name: Create VM
+      azure_rm_virtualmachine:
+        resource_group: "{{ azure_info.rg }}"
+        name: "{{ azure_info.vm }}"
+        vm_size: Standard_DS1_v2
+        admin_username: "{{ azure_info.user }}" 
+        ssh_password_enabled: False
+        ssh_public_keys:
+          - path: "/home/{{ azure_info.user }}/.ssh/authorized_keys"
+            key_data: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDKsfN0OHqBBk306pOehDFJ9ZPhjrOlym1QrQQL6OmnO3WskPHXqtrL4WtwJCQvrgUVZ4A65ax4lLz/EygoIpv997aYh0pGFAs0l8peHWsDkMalRr2bxZ5KbwjVyAPv5bJ8Qu1h+PY8Qf6aW+hAYfefU5CHzPian6l4R+++JO0//l8ugZZtujSPgPCllz+eJWuI44Qou0/XrrGTqwjwkb8hJjFlBEgGmPt45gjghBn9/xc6H1n8cyI1jDxRG66Q4dVD0pwCopg6WDeC7LReDvUFB8N9BI5teUugyc/x6j97eykZ07xw6tamerVEC+vFMvxPmkCs3H8zN66h9u+8+CLIqSm7A0StbM+p7REthAtZdNvDuL/usz1pqbRMM+MtaPuNL/LhN12JYK7aRjm84D4Hfs25AzwD20ottWVoHKTi335m3L0egNQ6mMS4hvbDp6q05vuyNtl7sUFGkBv46H3oX26UNoEs6RIM/LLlBkXEfulF6fYu3HIAwN3hHeXsP773RwT27KXU3MMGVWjDMfO+AOFcOUX0jVC6mvC4iYZbseNiDdqcF27sCYgmHUPlGb2Dait1Zj2f7lShOyIjzjR6RXUvu9JlKiICPDBtgzCQPz/IAsp0SqLGPxZojLkfNaVWoF4j+XDqhHSN07Bg36MXgR4vN//PeKY9U3NPYMsdJQ==
+        network_interfaces: "{{ azure_info.nic }}"
+        image:
+          offer: "{{ azure_info.image_offer }}"
+          publisher: "{{ azure_info.image_publisher }}"
+          sku: "{{ azure_info.image_sku }}"
+          version: "{{ azure_info.image_version }}"
+
+    - name: Add the instance to our inventory
+      lineinfile:
+        dest: "./inventory.ini"
+        regexp: "{{ output_ip_address.state.ip_address }}"
+        insertafter: "[LAMP]"
+        line: "{{ output_ip_address.state.ip_address }} ansible_user={{ azure_info.user }} ansible_become=yes"
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ output_ip_address.state.ip_address }}"
+        port: 22
+        state: present
