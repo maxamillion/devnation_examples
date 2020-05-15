@@ -22,7 +22,7 @@ There's a little bit of preparation work needed in order to run this demo.
 ### Prepare the runtime environment
 
 First thing first, enable the Ansible channel on your RHEL 8 system (assuming
-your CPU architectur is in fact x86_64, more information [here](https://access.redhat.com/articles/3174981)).
+your CPU architecture is in fact x86_64, more information [here](https://access.redhat.com/articles/3174981)).
 Then we'll install both Ansible and the python virtualenv utilities in order to
 setup a python virtualenv to pull the necessary dependencies for running against
 the cloud providers:
